@@ -1,73 +1,62 @@
-# EfficientAD on MVTec AD — Adaptive (auto-detect TPU / CUDA / MPS / CPU)
+# EfficientAD on MVTec AD — CPU branch
 
 A self-contained Jupyter notebook (`efficientad_mvtec_demo.ipynb`) that trains
 [**EfficientAD**](https://arxiv.org/abs/2303.14535) — a fast teacher–student
 anomaly detector — on the [**MVTec AD**](https://www.mvtec.com/company/research/datasets/mvtec-ad)
 dataset using the [**Anomalib**](https://github.com/openvinotoolkit/anomalib)
-library. Picks the best available accelerator at runtime.
+library, **on CPU only**.
+
+> **⚠️ This is slow.** Use this branch for smoke-testing the install / data
+> pipeline, for laptops without a GPU, or for CI. For real training use the
+> `gpu`, `tpu`, or `master` (adaptive) branches. Default `NUM_EPOCHS` here is
+> **50** instead of 250 — bump back up if you actually want paper-protocol
+> parity and have the patience.
 
 > **Branch layout**
-> - `master` — **this branch**, adaptive (auto-detects TPU/CUDA/MPS/CPU)
+> - `master` — adaptive (auto-detects TPU/GPU/MPS/CPU)
 > - `tpu` — TPU-only (`accelerator="tpu"`, `devices=1`)
 > - `gpu` — single CUDA GPU (`accelerator="gpu"`, `devices=1`)
-> - `cpu` — CPU-only fallback
+> - `cpu` — **this branch**, CPU-only fallback
 >
-> Use `master` if you want a single notebook that "just works" anywhere. Use a
-> specialized branch if you want a stripped-down notebook with no detection logic.
+> Switch with `git checkout <branch>`.
 
 The notebook is editor-agnostic — runs in Kaggle, Colab, Jupyter Lab, Jupyter
 Notebook, or VSCode. Output paths resolve relative to the kernel's working
 directory.
 
-## Accelerator priority
-
-Cell 1 walks this list and stops at the first match:
-
-| Priority | Detected when… | Used as |
-|---|---|---|
-| 1. **TPU** | `torch_xla` imports and `xm.xla_device()` succeeds | `accelerator="tpu",  devices=1` |
-| 2. **CUDA GPU** | `torch.cuda.is_available()` | `accelerator="gpu",  devices=1` (pinned to GPU 0) |
-| 3. **Apple MPS** | `torch.backends.mps.is_available()` (Apple Silicon) | `accelerator="mps",  devices=1` |
-| 4. **CPU** | fallback | `accelerator="cpu",  devices=1` |
-
-`devices=1` everywhere by design:
-- TPU pods on Kaggle expose 8 chips behind 8 separate worker hosts; only one is
-  reachable from a notebook kernel (see the `tpu` branch README for details).
-- Multi-GPU DDP requires `strategy="ddp_notebook"` and would shift the effective
-  batch off the EfficientAD `BATCH_SIZE=1` paper protocol.
-
 ## Quick start
 
-1. Open `efficientad_mvtec_demo.ipynb` in your notebook editor of choice.
-2. (If on Kaggle / Colab) pick the accelerator runtime — TPU, GPU, or none, the notebook handles it.
+1. Open `efficientad_mvtec_demo.ipynb` in your notebook editor.
+2. No accelerator needed (this branch ignores any GPU/TPU that's available).
 3. Run all cells. After the install cell finishes, **restart the kernel**, then re-run from the install cell.
 4. Default category is `bottle`; change `CATEGORY` in the configuration cell to swap.
 
-Approximate wall time for one category:
+Approximate wall time for one category at `NUM_EPOCHS=50`:
 
-| Backend | Wall time |
+| Hardware | Wall time |
 |---|---|
-| TPU v5e (1 chip) | ~10–15 min |
-| CUDA T4 / equivalent | ~15–25 min |
-| Apple M-series MPS | varies; ~30–60 min |
-| CPU | hours; only useful for smoke-testing |
+| Modern desktop CPU (8 threads) | 1–2 hours |
+| Laptop CPU (4 threads) | 3–5 hours |
+| Cloud notebook CPU | 4–6 hours |
+
+At `NUM_EPOCHS=250` (paper protocol) multiply by ~5×.
 
 ## Notebook structure
 
 | Cell | Purpose |
 |------|---------|
-| 1 | Detect accelerator → `ACCELERATOR`, `NUM_DEVICES` |
+| 1 | CPU sanity check — prints torch version + thread count |
 | 2 | Install `anomalib==2.4.1`; uninstall the legacy `pytorch-lightning` package |
 | 3 | Imports + seeding + `RESULTS_DIR = ./results` (editor-agnostic) |
 | 4 | Markdown reference for the 15 MVTec categories |
-| 5 | Configuration: `CATEGORY`, `MODEL_SIZE`, `IMAGE_SIZE`, `BATCH_SIZE`, `NUM_EPOCHS`, `DATASET_ROOT = ./mvtec` |
+| 5 | Configuration: `CATEGORY`, `MODEL_SIZE`, `IMAGE_SIZE`, `BATCH_SIZE`, `NUM_EPOCHS = 50`, `DATASET_ROOT = ./mvtec` |
 | 6 | `MVTecAD` datamodule — auto-downloads MVTec (~5 GB) on first run |
 | 7 | `EfficientAd(model_size=...)` |
-| 8 | `Engine(accelerator=ACCELERATOR, devices=NUM_DEVICES)` → `engine.fit(...)` |
+| 8 | `Engine(accelerator="cpu", devices=1)` → `engine.fit(...)` |
 | 9 | `engine.test(...)` — image/pixel AUROC, F1Max |
 | 10 | Markdown |
 | 11 | `engine.predict(...)` + 4-column matplotlib grid (image / GT mask / heatmap / binary) |
-| 12 | Manual single-image inference, device chosen by `_torch_device(ACCELERATOR)` |
+| 12 | Manual single-image inference on CPU |
 | 13 | Markdown |
 | 14 | Optional loop: train + evaluate every category, write `all_categories_results.csv` |
 | 15 | Custom-data instructions (Folder datamodule structure) |
@@ -76,15 +65,11 @@ Approximate wall time for one category:
 
 ```python
 CATEGORY     = "bottle"   # one of the 15 MVTec AD categories
-MODEL_SIZE   = "small"    # "small" or "medium"
+MODEL_SIZE   = "small"    # "small" or "medium" — leave "small" on CPU
 IMAGE_SIZE   = 256
-BATCH_SIZE   = 1          # paper protocol — keep at 1 for accuracy parity
-NUM_EPOCHS   = 250        # anomalib default
+BATCH_SIZE   = 1
+NUM_EPOCHS   = 50         # paper protocol is 250; bump if you have time
 ```
-
-`ACCELERATOR` and `NUM_DEVICES` are detected, not configured. To force a
-specific accelerator, override them in cell 1 immediately after the detection
-block.
 
 ## Outputs
 
@@ -97,10 +82,10 @@ Everything lands under `./results/` (resolved relative to the kernel's working d
 
 ## Known caveats
 
-- **MemoryBankMixin tail.** EfficientAD computes per-channel quantiles on CPU at the end of training — the pause before "✓ Training complete" is the model working, not hung.
-- **`pytorch-lightning` vs `lightning`.** Some hosts (Kaggle, sometimes Colab) ship the legacy standalone `pytorch-lightning` whose `LightningModule` is a different Python class than `lightning.pytorch.LightningModule`. Anomalib 2.x uses the latter. The install cell uninstalls the legacy package — **always restart the kernel after the install cell**.
-- **TPU first.** If `torch_xla` is importable and a TPU is reachable, the notebook uses it even if a CUDA GPU is also present. Override in cell 1 if you'd rather use the GPU.
-- **TPU on Kaggle = 1 chip only.** The `tpu` branch README explains why `devices=8` doesn't work in a notebook.
+- **CPU is fundamentally slow** for EfficientAD. There's no clever fix here — torch CPU just isn't fast on the convolutions.
+- **MemoryBankMixin tail.** EfficientAD computes per-channel quantiles on CPU at the end of training; on this branch the whole run is on CPU so this isn't a separate "tail" — it's all the same regime.
+- **`pytorch-lightning` vs `lightning`.** Some hosts ship the legacy standalone `pytorch-lightning` whose `LightningModule` is a different Python class than `lightning.pytorch.LightningModule`. Anomalib 2.x uses the latter. The install cell uninstalls the legacy package — **always restart the kernel after the install cell**.
+- **Lower `NUM_EPOCHS` means lower accuracy** vs. the published numbers. The default of 50 is a tradeoff for runtime; raise it if you want closer parity with the paper.
 
 ## License
 
