@@ -1,10 +1,11 @@
-# EfficientAD on MVTec AD — GPU branch (single CUDA GPU)
+# EfficientAD on MVTec AD — GPU branch (single CUDA GPU: T4 / P100 / …)
 
 A self-contained Jupyter notebook (`efficientad_mvtec_demo.ipynb`) that trains
 [**EfficientAD**](https://arxiv.org/abs/2303.14535) — a fast teacher–student
 anomaly detector — on the [**MVTec AD**](https://www.mvtec.com/company/research/datasets/mvtec-ad)
 dataset using the [**Anomalib**](https://github.com/openvinotoolkit/anomalib)
-library on **a single CUDA GPU**.
+library on **a single CUDA GPU**. Tested on Kaggle's *GPU T4 ×2* and *GPU P100*
+runtimes; works on any other CUDA device too (Colab GPU, local RTX, etc.).
 
 > **Branch layout**
 > - `master` — adaptive (auto-detects TPU/GPU/MPS/CPU)
@@ -18,33 +19,50 @@ The notebook is editor-agnostic — runs in Kaggle, Colab, Jupyter Lab, Jupyter
 Notebook, or VSCode. Output paths resolve relative to the kernel's working
 directory.
 
+## Supported GPUs
+
+| Runtime | Visible GPUs | Per-category wall time | Notes |
+|---|---|---|---|
+| **Kaggle GPU T4 ×2** | 2 × T4 (16 GB each, Turing) | ~15–25 min | Cell 1 pins to `cuda:0`; second T4 stays idle |
+| **Kaggle GPU P100** | 1 × P100 (16 GB, Pascal) | ~12–20 min | Slightly faster on FP32; pin is a no-op |
+| **Colab GPU runtime** | 1 × T4 / L4 / A100 | varies | Whatever Colab assigns; pin is a no-op |
+| **Local CUDA GPU** | host-dependent | host-dependent | Any compute capability ≥ 6.0 |
+
+The notebook is hardware-generic — it just calls `Engine(accelerator="gpu", devices=1)`
+and Lightning routes to whatever CUDA device is visible. Cell 1 prints the device
+name, compute capability and memory so you know what you actually got.
+
 ## Why only one GPU?
 
-Kaggle's *GPU T4 ×2* runtime gives you two T4s, but this branch deliberately uses
-just one. Reasons:
+If you're on Kaggle's *GPU T4 ×2* runtime you get two T4s, but this branch
+deliberately uses just one:
 
 - EfficientAD's published protocol uses `BATCH_SIZE=1`. Running DDP across two
   GPUs would give an effective batch of 2 — small accuracy drift vs. paper numbers.
 - Single-GPU avoids the `ddp_notebook` strategy and its associated multi-process
   quirks (datamodule reload, MemoryBankMixin sync, etc.).
-- The setup is dramatically simpler. The second T4 stays idle — that's fine.
+- Setup is dramatically simpler. The second T4 stays idle — that's fine.
 
-If you actually want both GPUs, see the multi-GPU notes at the bottom.
+On the P100 runtime (or any other single-GPU host) this is moot — there's only
+one GPU anyway, and the `CUDA_VISIBLE_DEVICES=0` pin is a harmless no-op.
+
+If you actually want both T4s, see the multi-GPU snippet at the bottom.
 
 ## Quick start
 
 1. Open `efficientad_mvtec_demo.ipynb` in your notebook editor of choice.
-2. On Kaggle: *Settings → Accelerator → **GPU T4 ×2*** (single T4 also works). On Colab: *Runtime → Change runtime type → GPU*. Local: any CUDA-enabled PyTorch install.
+2. Pick a GPU runtime:
+   - **Kaggle**: *Settings → Accelerator → **GPU T4 ×2*** *or* **GPU P100**
+   - **Colab**: *Runtime → Change runtime type → GPU*
+   - **Local**: any CUDA-enabled PyTorch install
 3. Run all cells. After the install cell finishes, **restart the kernel**, then re-run from the install cell.
 4. Default category is `bottle`; change `CATEGORY` in the configuration cell to swap.
-
-Wall time: roughly 15–25 min for one category on a single T4.
 
 ## Notebook structure
 
 | Cell | Purpose |
 |------|---------|
-| 1 | GPU sanity check; pins `CUDA_VISIBLE_DEVICES=0` so only the first GPU is used |
+| 1 | GPU sanity check — pins `CUDA_VISIBLE_DEVICES=0`; prints device name, compute capability and memory |
 | 2 | Install `anomalib==2.4.1`; uninstall the legacy `pytorch-lightning` package which conflicts with anomalib's `lightning.pytorch.LightningModule` |
 | 3 | Imports + seeding + `RESULTS_DIR = ./results` (editor-agnostic) |
 | 4 | Markdown reference for the 15 MVTec categories |
@@ -84,8 +102,9 @@ Everything lands under `./results/` (resolved relative to the kernel's working d
 - **MemoryBankMixin tail.** EfficientAD computes per-channel quantiles on CPU at the end of training. The pause before "✓ Training complete" is the model working, not hung.
 - **`pytorch-lightning` vs `lightning`.** Some hosts (Kaggle, sometimes Colab) ship the legacy standalone `pytorch-lightning` whose `LightningModule` is a different Python class than `lightning.pytorch.LightningModule`. Anomalib 2.x uses the latter. The install cell uninstalls the legacy package; **always restart the kernel after the install cell**.
 - **First-time MVTec download is ~5 GB.** On Kaggle, attach the public MVTec dataset and point `DATASET_ROOT` at `/kaggle/input/...` (read-only, but anomalib creates index files in the working dir).
+- **P100 lacks Tensor Cores.** EfficientAD here trains in FP32 anyway, so this isn't a slowdown — but if you experiment with `precision="16-mixed"` you'll see the gains on T4 / Ampere but not on P100.
 
-## Want both GPUs?
+## Want both T4s?
 
 Replace cell 1 (don't pin `CUDA_VISIBLE_DEVICES`) and cells 8 + 14:
 
@@ -102,7 +121,8 @@ engine = Engine(
 ```
 
 Be aware that `BATCH_SIZE=1 × 2 GPUs = effective batch 2`, which deviates
-slightly from the paper's protocol.
+slightly from the paper's protocol. (Not applicable on the P100 runtime —
+there's only one GPU there.)
 
 ## License
 
