@@ -1,16 +1,22 @@
-# EfficientAD on MVTec AD — Kaggle GPU T4 (single-GPU)
+# EfficientAD on MVTec AD — GPU branch (single CUDA GPU)
 
 A self-contained Jupyter notebook (`efficientad_mvtec_demo.ipynb`) that trains
 [**EfficientAD**](https://arxiv.org/abs/2303.14535) — a fast teacher–student
 anomaly detector — on the [**MVTec AD**](https://www.mvtec.com/company/research/datasets/mvtec-ad)
 dataset using the [**Anomalib**](https://github.com/openvinotoolkit/anomalib)
-library on a **single Kaggle T4 GPU**.
+library on **a single CUDA GPU**.
 
 > **Branch layout**
-> - `master` — TPU v5e-8 variant (8 cores, `accelerator="tpu"`)
-> - `gpu` — **this branch**, single-GPU variant (1 × T4, `accelerator="gpu"`, `devices=1`)
+> - `master` — adaptive (auto-detects TPU/GPU/MPS/CPU)
+> - `tpu` — TPU-only (`accelerator="tpu"`, `devices=1`)
+> - `gpu` — **this branch**, single CUDA GPU (`accelerator="gpu"`, `devices=1`)
+> - `cpu` — CPU-only fallback
 >
-> Switch with `git checkout master` ↔ `git checkout gpu`.
+> Switch with `git checkout <branch>`.
+
+The notebook is editor-agnostic — runs in Kaggle, Colab, Jupyter Lab, Jupyter
+Notebook, or VSCode. Output paths resolve relative to the kernel's working
+directory.
 
 ## Why only one GPU?
 
@@ -27,9 +33,9 @@ If you actually want both GPUs, see the multi-GPU notes at the bottom.
 
 ## Quick start
 
-1. Open the notebook on Kaggle: *File → Import Notebook → Upload `efficientad_mvtec_demo.ipynb`*.
-2. *Settings → Accelerator → **GPU T4 ×2*** (single T4 also works).
-3. Run all cells. After the install cell finishes, **Runtime → Restart session**, then re-run from the install cell.
+1. Open `efficientad_mvtec_demo.ipynb` in your notebook editor of choice.
+2. On Kaggle: *Settings → Accelerator → **GPU T4 ×2*** (single T4 also works). On Colab: *Runtime → Change runtime type → GPU*. Local: any CUDA-enabled PyTorch install.
+3. Run all cells. After the install cell finishes, **restart the kernel**, then re-run from the install cell.
 4. Default category is `bottle`; change `CATEGORY` in the configuration cell to swap.
 
 Wall time: roughly 15–25 min for one category on a single T4.
@@ -38,11 +44,11 @@ Wall time: roughly 15–25 min for one category on a single T4.
 
 | Cell | Purpose |
 |------|---------|
-| 1 | GPU sanity check; pins `CUDA_VISIBLE_DEVICES=0` so only the first T4 is used |
+| 1 | GPU sanity check; pins `CUDA_VISIBLE_DEVICES=0` so only the first GPU is used |
 | 2 | Install `anomalib==2.4.1`; uninstall the legacy `pytorch-lightning` package which conflicts with anomalib's `lightning.pytorch.LightningModule` |
-| 3 | Imports + seeding + `RESULTS_DIR = /kaggle/working/results` |
+| 3 | Imports + seeding + `RESULTS_DIR = ./results` (editor-agnostic) |
 | 4 | Markdown reference for the 15 MVTec categories |
-| 5 | Configuration: `CATEGORY`, `MODEL_SIZE`, `IMAGE_SIZE`, `BATCH_SIZE`, `NUM_EPOCHS` |
+| 5 | Configuration: `CATEGORY`, `MODEL_SIZE`, `IMAGE_SIZE`, `BATCH_SIZE`, `NUM_EPOCHS`, `DATASET_ROOT = ./mvtec` |
 | 6 | `MVTecAD` datamodule — auto-downloads MVTec (~5 GB) on first run |
 | 7 | `EfficientAd(model_size=...)` |
 | 8 | `Engine(accelerator="gpu", devices=1)` → `engine.fit(...)` |
@@ -66,7 +72,7 @@ NUM_EPOCHS   = 250        # anomalib default
 
 ## Outputs
 
-Everything lands under `/kaggle/working/results/`:
+Everything lands under `./results/` (resolved relative to the kernel's working dir):
 
 - `predictions_<category>.png` — 4-column visualization grid (cell 11)
 - `single_inference_<category>.png` — single-image demo (cell 12)
@@ -75,9 +81,9 @@ Everything lands under `/kaggle/working/results/`:
 
 ## Known caveats
 
-- **MemoryBankMixin tail.** EfficientAD computes per-channel quantiles on CPU at the end of training. This appears as a long pause before the "✓ Training complete" line — it's working, not hung.
-- **`pytorch-lightning` vs `lightning`.** Kaggle ships the legacy standalone `pytorch-lightning` package, whose `LightningModule` class is a different Python object than `lightning.pytorch.LightningModule`. Anomalib 2.x uses the latter. The install cell uninstalls the legacy package; **always restart the runtime after the install cell** so the kernel drops cached imports.
-- **First-time MVTec download is ~5 GB** to `/kaggle/working/mvtec`. To avoid re-downloading on every session, attach the public Kaggle MVTec dataset and point `DATASET_ROOT` at `/kaggle/input/...` (it's read-only, so anomalib will create its index files inside `/kaggle/working/` and pull image data from the input mount).
+- **MemoryBankMixin tail.** EfficientAD computes per-channel quantiles on CPU at the end of training. The pause before "✓ Training complete" is the model working, not hung.
+- **`pytorch-lightning` vs `lightning`.** Some hosts (Kaggle, sometimes Colab) ship the legacy standalone `pytorch-lightning` whose `LightningModule` is a different Python class than `lightning.pytorch.LightningModule`. Anomalib 2.x uses the latter. The install cell uninstalls the legacy package; **always restart the kernel after the install cell**.
+- **First-time MVTec download is ~5 GB.** On Kaggle, attach the public MVTec dataset and point `DATASET_ROOT` at `/kaggle/input/...` (read-only, but anomalib creates index files in the working dir).
 
 ## Want both GPUs?
 
