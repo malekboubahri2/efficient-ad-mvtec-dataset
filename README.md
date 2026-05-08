@@ -1,10 +1,37 @@
-# EfficientAD on MVTec AD — Kaggle TPU v5e-8
+# EfficientAD on MVTec AD — Kaggle TPU v5e-8 (single chip)
 
 A self-contained Jupyter notebook (`efficientad_mvtec_demo.ipynb`) that trains
 [**EfficientAD**](https://arxiv.org/abs/2303.14535) — a fast teacher–student
 anomaly detector — on the [**MVTec AD**](https://www.mvtec.com/company/research/datasets/mvtec-ad)
 dataset using the [**Anomalib**](https://github.com/openvinotoolkit/anomalib)
-library, optimized for the **Kaggle TPU VM v5e-8** runtime (8 cores).
+library on **one TPU chip** of Kaggle's *TPU VM v5e-8* runtime.
+
+> **Branch layout**
+> - `master` — **this branch**, single-chip TPU variant (`accelerator="tpu"`, `devices=1`)
+> - `gpu` — single T4 GPU variant on the *GPU T4 ×2* runtime
+>
+> Switch with `git checkout master` ↔ `git checkout gpu`.
+
+## Why only one of the 8 chips?
+
+Kaggle exposes TPU v5e-8 as an **8-worker pod slice**: each chip is fronted by
+its own host process, and initializing all 8 requires launching 8 host
+processes — which can't be done from inside a single Jupyter kernel. Setting
+`devices=8` triggers Lightning's XLA launcher to fail with:
+
+```
+RuntimeError: Bad StatusOr access: UNKNOWN: TPU initialization failed:
+Invalid --…_slice_builder_worker_addresses specified.
+Expected 8 worker addresses, got 1.
+```
+
+With `devices=1`, Lightning runs inline on chip 0 (no `xmp.spawn`, no worker
+discovery) and training works reliably. EfficientAD's `BATCH_SIZE=1` paper
+protocol benefits little from 8-way replication anyway.
+
+If you really want all 8 chips, you have to convert this notebook to a script
+and launch it with `python -m torch_xla.launch script.py` — that path is out of
+scope for this demo.
 
 ## Quick start
 
@@ -13,7 +40,7 @@ library, optimized for the **Kaggle TPU VM v5e-8** runtime (8 cores).
 3. Run all cells. After the install cell finishes, **Runtime → Restart session**, then re-run from the install cell.
 4. Default category is `bottle`; change `CATEGORY` in the configuration cell to swap.
 
-Wall time: roughly 5–10 min for one category on TPU v5e-8 (the first epoch is slow because XLA traces and compiles the graph; subsequent epochs are fast).
+Wall time: roughly 10–15 min for one category on a single v5e chip (the first epoch is slow because XLA traces and compiles the graph; subsequent epochs are fast).
 
 ## Notebook structure
 
@@ -23,10 +50,10 @@ Wall time: roughly 5–10 min for one category on TPU v5e-8 (the first epoch is 
 | 2 | Install `anomalib==2.4.1`; uninstall the legacy `pytorch-lightning` package which conflicts with anomalib's `lightning.pytorch.LightningModule` |
 | 3 | Imports + seeding + `RESULTS_DIR = /kaggle/working/results` |
 | 4 | Markdown reference for the 15 MVTec categories |
-| 5 | Configuration: `CATEGORY`, `MODEL_SIZE`, `IMAGE_SIZE`, `BATCH_SIZE`, `NUM_EPOCHS`, `NUM_CORES = 8` |
+| 5 | Configuration: `CATEGORY`, `MODEL_SIZE`, `IMAGE_SIZE`, `BATCH_SIZE`, `NUM_EPOCHS`, `NUM_CORES = 1` |
 | 6 | `MVTecAD` datamodule — auto-downloads MVTec (~5 GB) on first run |
 | 7 | `EfficientAd(model_size=...)` |
-| 8 | `Engine(accelerator="tpu", devices=8)` → `engine.fit(...)` |
+| 8 | `Engine(accelerator="tpu", devices=1)` → `engine.fit(...)` |
 | 9 | `engine.test(...)` — image/pixel AUROC, F1Max |
 | 10 | Markdown |
 | 11 | `engine.predict(...)` + 4-column matplotlib grid (image / GT mask / heatmap / binary) |
@@ -43,7 +70,7 @@ MODEL_SIZE   = "small"    # "small" or "medium"
 IMAGE_SIZE   = 256        # 192 reduces compile time slightly
 BATCH_SIZE   = 1          # paper protocol — keep at 1 for accuracy parity
 NUM_EPOCHS   = 250        # anomalib default
-NUM_CORES    = 8          # TPU v5e-8
+NUM_CORES    = 1          # do NOT raise this; see the section above
 ```
 
 ## Outputs
@@ -62,14 +89,7 @@ Everything lands under `/kaggle/working/results/`:
 - **`pytorch-lightning` vs `lightning`.** Kaggle ships the legacy standalone `pytorch-lightning` package, whose `LightningModule` class is a different Python object than `lightning.pytorch.LightningModule`. Anomalib 2.x uses the latter. The install cell uninstalls the legacy package; **always restart the runtime after the install cell** so the kernel drops cached imports.
 - **Don't upgrade `torch` on Kaggle TPU.** It's tied to a specific `torch_xla` build. The install cell only installs anomalib; it does not pass `-U torch`.
 - **Batch size of 1.** Per the EfficientAD paper. Bumping it up would help TPU throughput but degrades accuracy parity with published numbers.
-
-## Switching to GPU
-
-If you want to run on a GPU runtime instead, change cell 1, 5, 8 and 12:
-- Cell 1: `import torch; torch.cuda.is_available()` instead of importing `torch_xla`
-- Cell 5: drop `NUM_CORES`
-- Cell 8: `accelerator="gpu", devices=1`
-- Cell 12: `device = "cuda"` and remove the `xm.mark_step()` call
+- **`devices=8` does not work in a notebook.** See *Why only one of the 8 chips?* above.
 
 ## License
 
