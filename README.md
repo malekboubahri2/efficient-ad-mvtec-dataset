@@ -76,7 +76,11 @@ If you actually want both T4s, see the multi-GPU snippet at the bottom.
 | 12 | Manual single-image inference using `cuda` |
 | 13 | Markdown |
 | 14 | Optional loop: train + evaluate every category, write `all_categories_results.csv` |
-| 15 | Custom-data instructions (Folder datamodule structure) |
+| 15 | Markdown — Pi export overview |
+| 16 | `engine.export(ExportType.ONNX)` → `results/exports/onnx/model.onnx` |
+| 17 | Dynamic INT8 quantization → `results/exports/onnx/model_int8.onnx` |
+| 18 | Markdown — Pi setup + run instructions |
+| 19 | Custom-data instructions (Folder datamodule structure) |
 
 ## Configuration knobs
 
@@ -96,6 +100,50 @@ Everything lands under `./results/` (resolved relative to the kernel's working d
 - `single_inference_<category>.png` — single-image demo (cell 12)
 - `all_categories_results.csv` — per-category metrics (cell 14, when `RUN_ALL_CATEGORIES=True`)
 - `lightning_logs/` — Lightning's per-run logs and the trained checkpoint
+- `exports/onnx/model.onnx` and `exports/onnx/model_int8.onnx` — produced by the export cells (see next section)
+
+## Deploying to a Raspberry Pi
+
+Cells 15–18 export the trained model to ONNX and run dynamic INT8 quantization
+for ARM. The companion script [`pi_inference.py`](pi_inference.py) loads either
+artifact and runs inference with **ONNX Runtime** on the Pi.
+
+### Why ONNX (and not OpenVINO / TFLite / TorchScript)
+
+- **Portable**: same `.onnx` file runs on Pi, x86, Jetson, etc.
+- **Easy install on Pi**: `pip install onnxruntime` resolves to the right ARM wheel
+  on Raspberry Pi OS 64-bit. No apt repos, no special builds.
+- **Dynamic INT8 in one line** via `onnxruntime.quantization.quantize_dynamic` —
+  weights → INT8, activation scales computed at runtime, no calibration set
+  needed. For anomaly detection the accuracy hit vs. FP32 is typically negligible.
+
+### Workflow
+
+| Step | Where | What |
+|---|---|---|
+| 1 | Notebook (cell 16) | `engine.export(ExportType.ONNX)` → `results/exports/onnx/model.onnx` (~32 MB) |
+| 2 | Notebook (cell 17) | `quantize_dynamic` → `results/exports/onnx/model_int8.onnx` (~8 MB) |
+| 3 | `scp` | Copy the `.onnx` and `pi_inference.py` to the Pi |
+| 4 | Pi shell | `pip install onnxruntime numpy pillow matplotlib` (one-time) |
+| 5 | Pi shell | `python pi_inference.py model_int8.onnx my_image.jpg` |
+
+### Expected per-image latency (Pi 4 / Pi 5, `MODEL_SIZE="small"`, 256×256)
+
+| Model | Latency | RAM footprint |
+|---|---|---|
+| `model.onnx` (FP32)        | ~150–250 ms | ~70 MB |
+| `model_int8.onnx` (INT8)   | ~50–100 ms  | ~25 MB |
+
+`pi_inference.py` accepts:
+
+```bash
+python pi_inference.py MODEL IMAGE [--threshold 0.5] [--image-size 256] [--no-viz] [--warmup 1]
+```
+
+It prints latency, anomaly score and a NORMAL/ANOMALOUS verdict, and (unless
+`--no-viz`) writes `<image>_heatmap.png` next to the input. Threshold defaults
+to 0.5; tune it to match your precision/recall target on a held-out validation
+set.
 
 ## Known caveats
 
